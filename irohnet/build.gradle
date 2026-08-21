@@ -1,0 +1,72 @@
+// A deliberately Minecraft-free module.
+//
+// The official iroh JVM bindings (computer.iroh:iroh) are Kotlin-only and *partly uncallable
+// from Java*: every stream read/write takes or returns a Kotlin inline class, so the JVM method
+// names carry a hyphenated hash suffix (`readToEnd-qim9Vi0`, `write-ZIaKswc`, ...) which is not
+// a legal Java identifier. The whole read path is unreachable from Java source, and everything
+// is `suspend` on top of that. Hence this Kotlin facade, which exposes a plain blocking,
+// IOException-based API that the Java mod code can actually call.
+//
+// Keeping Minecraft out means the tunnel primitives can be tested standalone:
+//   ./gradlew :irohnet:test
+//
+// NOTE: this module intentionally does NOT apply multiloader-common / multiloader-loader, and
+// does not carry the `io.github.mcgradleconventions.loader` attribute.
+plugins {
+    id 'java-library'
+    id 'org.jetbrains.kotlin.jvm'
+}
+
+base {
+    archivesName = "${mod_id}-irohnet"
+}
+
+// No build script in this project declares repositories -- they were removed from
+// multiloader-common in 6c933ec, and loom/moddev inject their own. This module needs a real one.
+repositories {
+    mavenCentral()
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(java_version)
+}
+
+kotlin {
+    compilerOptions {
+        // Minecraft 26.2 runs on Java 25; the iroh artifact itself is built against 21.
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+        freeCompilerArgs.add('-Xjvm-default=all')
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = 21
+}
+
+dependencies {
+    // `api` so that consumers compiling against our facade also see the iroh types if needed.
+    api("computer.iroh:iroh:${iroh_version}") {
+        exclude group: 'net.java.dev.jna'
+    }
+    // iroh's POM scopes coroutines as `runtime`
+    api("org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:${coroutines_version}")
+
+    compileOnly("net.java.dev.jna:jna:5.17.0")
+
+    testImplementation("net.java.dev.jna:jna:5.17.0")
+    testImplementation(platform("org.junit:junit-bom:5.11.4"))
+    testImplementation('org.junit.jupiter:junit-jupiter')
+    testRuntimeOnly('org.junit.platform:junit-platform-launcher')
+}
+
+tasks.named('test', Test) {
+    useJUnitPlatform()
+    // The p2p round-trip test uses live n0 discovery/relay infrastructure
+    if (project.hasProperty('irohnet.offline')) {
+        exclude '**/IrohNetworkTest.class'
+    }
+    testLogging {
+        events 'passed', 'skipped', 'failed'
+        showStandardStreams = true
+    }
+}
